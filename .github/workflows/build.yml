@@ -28,83 +28,9 @@ env:
   PIP_USE_PEP517: true
 
 jobs:
-  build-client:
-    runs-on: ubuntu-latest
-    name: Build client
-    steps:
-      - name: Clone client
-        uses: actions/checkout@v4
-        with:
-          repository: "swingmx/webclient"
-          path: swingmusic-client
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20.x
-
-      - name: Install yarn
-        run: |
-          npm install -g yarn
-
-      - name: Install dependencies & Build client
-        run: |
-          cd swingmusic-client
-          yarn install
-          yarn build --outDir ../client
-          cd ..
-
-      - name: Upload client
-        uses: actions/upload-artifact@v4
-        with:
-          path: "client/"
-          compression-level: 0
-          name: "client"
-
-  build-wheels:
-    name: Build wheels
-    runs-on: ubuntu-latest
-    needs: [build-client]
-
-    steps:
-      - name: Checkout swingmusic
-        uses: actions/checkout@v4
-        with:
-          repository: 'swingmx/swingmusic'
-          ref: v${{ github.event.inputs.tag }}
-          fetch-depth: 0
-
-      - name: Download client artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: client
-          path: client
-
-      - name: Compress client and copy to src/swingmusic/client.zip
-        run: |
-          zip -r client.zip client
-          rm -r client
-          cp client.zip src/swingmusic/client.zip
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Build wheels
-        run: pip wheel . -w wheelhouse --no-deps
-
-      - uses: actions/upload-artifact@v4
-        with:
-          # name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
-          path: ./wheelhouse/*.whl
-          compression-level: 0
-          name: "wheels"
-
-
   build-pyinstaller:
     name: Build binary on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    needs: [build-client, build-wheels]
     if: ${{ github.event.inputs.binary_build == 'true' }}
 
     strategy:
@@ -132,38 +58,21 @@ jobs:
           python-version: "3.11.x"
 
       - name: Download client artifact
-        uses: actions/download-artifact@v4
+        uses: robinraju/release-downloader@v1
         with:
-          name: client
-          path: client
+          repository: 'swingmx/swingmusic'
+          tag: v${{ github.event.inputs.tag }}
+          fileName: 'swingmusic-${{ github.event.inputs.tag }}-py3-none-any.whl'
+          out-file-path: wheels
 
-      - name: Compress client (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          zip -r client.zip client
-
-      - name: Compress client (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Compress-Archive -Path client -DestinationPath client.zip -Force
-
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+      - name: Download wheels artifact
+        uses: robinraju/release-downloader@v1
         with:
-          name: wheels
-          path: wheels
-          merge-multiple: true
+          repository: 'swingmx/swingmusic'
+          tag: v${{ github.event.inputs.tag }}
+          fileName: 'client.zip'
 
       # install system packages
-      - name: Setup Homebrew
-        if: ${{ startsWith(matrix.os, 'macos') }}
-        uses: Homebrew/actions/setup-homebrew@master
-
-      - name: Install libev (macOS)
-        if: ${{ startsWith(matrix.os, 'macos') }}
-        run: |
-          brew install libev
-
       - name: Install libev (Linux)
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
         run: |
@@ -186,7 +95,7 @@ jobs:
   upload-builds:
     name: Uploading builds to release
     runs-on: ubuntu-latest
-    needs: [build-client, build-wheels, build-pyinstaller]
+    needs: [build-pyinstaller]
 
     steps:
       - name: Checkout swingmusic
@@ -196,24 +105,6 @@ jobs:
           ref: v${{ github.event.inputs.tag }}
           sparse-checkout: |
             .github/changelog.md
-
-      - name: Download client artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: client
-          path: client
-
-      - name: compress client
-        run: |
-          zip -r client.zip client
-          rm -r client
-
-      - name: Download wheel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: wheels
-          path: wheels
-          merge-multiple: true
 
       - name: Download all Pyinstaller builds
         uses: actions/download-artifact@v4
@@ -233,5 +124,5 @@ jobs:
           artifactErrorsFailBuild: true
           commit: ${{ github.sha }}
           makeLatest: ${{github.event.inputs.is_latest == 'true'}}
-          artifacts: "client.zip,wheels/*,pyinstaller/*"
+          artifacts: "pyinstaller/*"
           token: ${{ secrets.GITHUB_TOKEN }}
